@@ -28,11 +28,23 @@ tidymodels_prefer()
 ```{r}
 # load data
 seoul_bike <- read.csv("/Users/katlynshaw/Desktop/pstat 131/final-proj-131-shawk/SeoulBikeDataColNameFIXED.csv") %>% 
-  clean_names()
+  clean_names() %>% 
+  mutate(date = as.Date(date, "%m/%d/%Y"),
+         seasons = factor(seasons, levels = c("Winter", "Spring", "Summer", "Fall")),
+         holiday = factor(holiday, levels = c("Holiday", "No Holiday")),
+         functioning_day = factor(functioning_day, levels = c("Yes", "No")))
+
+str(seoul_bike)
 
 ```
 
-Columns list: Date mm/dd/yyyy, Rented Bike Count, Temperature (Celsius), Humidity (%), Wind Speed (m/s), Visibility (10m), Dew point temperature (Celsius), Solar Radiation (MJ/m2), Rainfal (mm), Snowfall (cm), Seasons, Holiday, Functioning Day
+Columns list: Date mm/dd/yyyy, Rented Bike Count, Hour, Temperature (Celsius), Humidity (%), Wind Speed (m/s), Visibility (10m), Dew point temperature (Celsius), Solar Radiation (MJ/m2), Rainfall (mm), Snowfall (cm), Seasons, Holiday, Functioning Day
+
+exploratory questions:
+
+What's the most popular day to rent bikes? Month? Season?
+
+
 
 
 
