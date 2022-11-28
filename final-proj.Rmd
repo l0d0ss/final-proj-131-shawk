@@ -6,7 +6,36 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+# load packages
+library(glmnet)
+library(janitor)
+library(corrplot)
+library(rpart.plot)
+library(vip)
+library(randomForest)
+library(xgboost)
+library(tidyverse)
+library(tidymodels)
+library(ranger)
+library(discrim)
+library(poissonreg)
+library(corrr)
+library(klaR)
+library(yardstick)
+tidymodels_prefer()
 ```
 
-Test
+```{r}
+# load data
+seoul_bike <- read.csv("/Users/katlynshaw/Desktop/pstat 131/final-proj-131-shawk/SeoulBikeDataColNameFIXED.csv") %>% 
+  clean_names()
+
+```
+
+Columns list: Date mm/dd/yyyy, Rented Bike Count, Temperature (Celsius), Humidity (%), Wind Speed (m/s), Visibility (10m), Dew point temperature (Celsius), Solar Radiation (MJ/m2), Rainfal (mm), Snowfall (cm), Seasons, Holiday, Functioning Day
+
+
+
+
+
+
