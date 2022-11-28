@@ -29,20 +29,53 @@ tidymodels_prefer()
 # load data
 seoul_bike <- read.csv("/Users/katlynshaw/Desktop/pstat 131/final-proj-131-shawk/SeoulBikeDataColNameFIXED.csv") %>% 
   clean_names() %>% 
-  mutate(date = as.Date(date, "%m/%d/%Y"),
-         seasons = factor(seasons, levels = c("Winter", "Spring", "Summer", "Fall")),
+  mutate(date = as.Date(date, "%d/%m/%Y"),
+         seasons = factor(seasons, levels = c("Winter", "Spring", "Summer", "Autumn")),
          holiday = factor(holiday, levels = c("Holiday", "No Holiday")),
-         functioning_day = factor(functioning_day, levels = c("Yes", "No")))
+         functioning_day = factor(functioning_day, levels = c("Yes", "No")),
+         weekday = factor(lubridate::wday(date), levels = c(1,2,3,4,5,6,7)))
 
-str(seoul_bike)
 
 ```
 
-Columns list: Date mm/dd/yyyy, Rented Bike Count, Hour, Temperature (Celsius), Humidity (%), Wind Speed (m/s), Visibility (10m), Dew point temperature (Celsius), Solar Radiation (MJ/m2), Rainfall (mm), Snowfall (cm), Seasons, Holiday, Functioning Day
+```{r}
+# split data
+
+seoul_bike_split <- seoul_bike %>% 
+  initial_split(prop = 0.8)
+
+bike_train <- training(seoul_bike_split)
+bike_test <- testing(seoul_bike_split)
+
+```
+
+
+Columns list: Date mm/dd/yyyy, Rented Bike Count, Hour, Temperature (Celsius), Humidity (%), Wind Speed (m/s), Visibility (10m), Dew point temperature (Celsius), Solar Radiation (MJ/m2), Rainfall (mm), Snowfall (cm), Seasons, Holiday, Functioning Day, weekday (1=sunday, 2=monday, etc)
+
+Data goes from 12/1/2017 to 11/30/2018, or 1 full year
 
 exploratory questions:
 
-What's the most popular day to rent bikes? Month? Season?
+What's the most popular day to rent bikes? Month? Season? Hour?
+
+
+```{r}
+
+bike_train %>% 
+  ggplot(aes(date, rented_bike_count)) + geom_col()
+
+bike_train %>% 
+  ggplot(aes(seasons, rented_bike_count)) + geom_col()
+
+bike_train %>% 
+  ggplot(aes(weekday, rented_bike_count)) + geom_col()
+
+bike_train %>% 
+  ggplot(aes(hour, rented_bike_count)) + geom_col()
+
+```
+
+
 
 
 
