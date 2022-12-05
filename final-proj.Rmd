@@ -45,6 +45,8 @@ seoul_bike <- read.csv("/Users/katlynshaw/Desktop/pstat 131/final-proj-131-shawk
 ```{r}
 # split data
 
+set.seed(151020)
+
 seoul_bike_split <- seoul_bike %>% 
   initial_split(prop = 0.8)
 
