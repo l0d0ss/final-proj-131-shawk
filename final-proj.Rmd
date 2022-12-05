@@ -30,12 +30,15 @@ tidymodels_prefer()
 seoul_bike <- read.csv("/Users/katlynshaw/Desktop/pstat 131/final-proj-131-shawk/SeoulBikeDataColNameFIXED.csv") %>% 
   clean_names() %>% 
   mutate(date = as.Date(date, "%d/%m/%Y"),
+         time_of_day = factor(ifelse(hour < 6, "Night", ifelse(hour < 12, "Morning", ifelse(hour < 18, "Afternoon", ifelse(hour < 24, "Evening", "Null")))), levels = c("Night", "Morning", "Afternoon", "Evening")),
+         hour = factor(hour, levels = c(0:23)),
          seasons = factor(seasons, levels = c("Winter", "Spring", "Summer", "Autumn")),
          holiday = factor(holiday, levels = c("Holiday", "No Holiday")),
          functioning_day = factor(functioning_day, levels = c("Yes", "No")),
-         weekday = factor(lubridate::wday(date), levels = c(1,2,3,4,5,6,7)))
-
-
+         weekday = factor(lubridate::wday(date), levels = c(1:7)),
+         workday = factor(ifelse(weekday != 1 & weekday != 7, "Yes", "No"), levels = c("Yes", "No")),
+         goodweather = factor(ifelse(rainfall == 0.0 & snowfall == 0.0, "Yes", "No"), levels = c("Yes", "No"))
+         )
 ```
 
 ```{r}
@@ -50,9 +53,9 @@ bike_test <- testing(seoul_bike_split)
 ```
 
 
-Columns list: Date mm/dd/yyyy, Rented Bike Count, Hour, Temperature (Celsius), Humidity (%), Wind Speed (m/s), Visibility (10m), Dew point temperature (Celsius), Solar Radiation (MJ/m2), Rainfall (mm), Snowfall (cm), Seasons, Holiday, Functioning Day, weekday (1=sunday, 2=monday, etc)
+Columns list: Date mm/dd/yyyy, Rented Bike Count, Hour, Temperature (Celsius), Humidity (%), Wind Speed (m/s), Visibility (10m), Dew point temperature (Celsius), Solar Radiation (MJ/m2), Rainfall (mm), Snowfall (cm), Seasons, Holiday, Functioning Day, weekday (1=sunday, 2=monday, etc), workday assumes a 5 day workweek from mon-fri returns Yes for weekday and No for weekend
 
-Data goes from 12/1/2017 to 11/30/2018, or 1 full year
+Data goes from 12/1/2017 to 11/30/2018 which is 1 full year.
 
 exploratory questions:
 
@@ -62,7 +65,7 @@ What's the most popular day to rent bikes? Month? Season? Hour?
 ```{r}
 
 bike_train %>% 
-  ggplot(aes(date, rented_bike_count)) + geom_col()
+  ggplot(aes(date, rented_bike_count)) + geom_point() + geom_smooth()
 
 bike_train %>% 
   ggplot(aes(seasons, rented_bike_count)) + geom_col()
@@ -73,10 +76,52 @@ bike_train %>%
 bike_train %>% 
   ggplot(aes(hour, rented_bike_count)) + geom_col()
 
+bike_train %>% 
+  ggplot(aes(time_of_day, rented_bike_count)) + geom_col()
+
+bike_train %>% 
+  ggplot(aes(rented_bike_count, humidity)) + geom_point() + geom_smooth(method = "lm")
+
+bike_train %>% filter(rainfall != 0.0) %>% 
+  ggplot(aes(rainfall, rented_bike_count)) + geom_point() + geom_smooth(method = "lm")
+
+bike_train %>% filter(snowfall != 0.0) %>%
+  ggplot(aes(snowfall, rented_bike_count)) + geom_point() + geom_smooth(method = "lm")
+
+bike_train %>% 
+  ggplot(aes(temperature, rented_bike_count)) + geom_point() + geom_smooth()
+
+bike_train %>% 
+  select(where(is.numeric)) %>% 
+  cor(use="pairwise.complete.obs") %>% 
+  corrplot(type = 'lower', diag = FALSE, method = 'color')
+
 ```
 
+```{r}
+# letsa get cookin
+bikes_recipe <- recipe(rented_bike_count ~
+                         hour +
+                         temperature +
+                         humidity +
+                         wind_speed +
+                         visibility +
+                         dew_point_temperature +
+                         solar_radiation +
+                         rainfall +
+                         snowfall +
+                         seasons +
+                         holiday +
+                         functioning_day +
+                         time_of_day +
+                         weekday +
+                         workday +
+                         goodweather,
+                       data = bike_train) %>% 
+  step_dummy(hour, seasons, holiday, functioning_day, time_of_day, weekday, workday, goodweather) %>% 
+  step_normalize(all_predictors())
 
-
+```
 
 
 
