@@ -38,6 +38,7 @@ seoul_bike <- read.csv("/Users/katlynshaw/Desktop/pstat 131/final-proj-131-shawk
          weekday = factor(lubridate::wday(date), levels = c(1:7)),
          workday = factor(ifelse(weekday != 1 & weekday != 7, "Yes", "No"), levels = c("Yes", "No")),
          goodweather = factor(ifelse(rainfall == 0.0 & snowfall == 0.0, "Yes", "No"), levels = c("Yes", "No"))
+         #percent_of_mean = rented_bike_count / mean(seoul_bike$rented_bike_count)
          )
 ```
 
