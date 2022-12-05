@@ -113,18 +113,45 @@ bikes_recipe <- recipe(rented_bike_count ~
                          snowfall +
                          seasons +
                          holiday +
-                         functioning_day +
-                         time_of_day +
-                         weekday +
-                         workday +
-                         goodweather,
+                         functioning_day,
                        data = bike_train) %>% 
-  step_dummy(hour, seasons, holiday, functioning_day, time_of_day, weekday, workday, goodweather) %>% 
+  step_dummy(hour, seasons, holiday, functioning_day) %>% 
   step_normalize(all_predictors())
 
 ```
 
+```{r}
 
+lm_model <- linear_reg() %>% 
+  set_engine("lm")
+
+lm_workflow <- workflow() %>% 
+  add_model(lm_model) %>% 
+  add_recipe(bikes_recipe)
+
+lm_fit <- fit(lm_workflow, bike_train)
+
+lm_fit %>%
+  extract_fit_parsnip() %>% 
+  tidy()
+
+bike_train_res <- predict(lm_fit, new_data = bike_train %>% select(-rented_bike_count)) %>% 
+  bind_cols(bike_train %>% select(rented_bike_count))
+
+bike_train_res %>% 
+  head()
+
+bike_train_res %>% 
+  ggplot(aes(x = .pred, y = rented_bike_count)) +
+  geom_point(alpha = 0.2) +
+  geom_abline(lty = 2) + 
+  theme_bw() +
+  coord_obs_pred()
+
+bike_metrics <- metric_set(rmse, rsq, mae)
+bike_metrics(bike_train_res, truth = rented_bike_count, estimate = .pred)
+
+```
 
 
 
