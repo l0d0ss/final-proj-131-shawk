@@ -124,6 +124,8 @@ bikes_recipe <- recipe(rented_bike_count ~
 
 ```{r}
 
+# linear regression model
+
 lm_model <- linear_reg() %>% 
   set_engine("lm")
 
@@ -155,7 +157,34 @@ bike_metrics(bike_train_res, truth = rented_bike_count, estimate = .pred)
 
 ```
 
+```{r}
+# ridge regression
 
+ridge_spec <- linear_reg(mixture = 0, penalty = 0) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet")
+
+ridge_fit <- fit(ridge_spec, rented_bike_count ~
+                         hour +
+                         temperature +
+                         humidity +
+                         wind_speed +
+                         visibility +
+                         dew_point_temperature +
+                         solar_radiation +
+                         rainfall +
+                         snowfall +
+                         seasons +
+                         holiday +
+                         functioning_day,
+                       data = bike_train)
+
+ridge_fit %>% 
+  extract_fit_engine() %>% 
+  plot(xvar = "lambda")
+  
+
+```
 
 
 
