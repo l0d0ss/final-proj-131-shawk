@@ -1,11 +1,13 @@
 ---
-title: "final project"
+title: "PSTAT 131 Final Project"
 author: "Katlyn Shaw"
 date: "2022-11-28"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE,
+                      warning = FALSE)
 # load packages
 library(glmnet)
 library(janitor)
@@ -22,27 +24,33 @@ library(poissonreg)
 library(corrr)
 library(klaR)
 library(yardstick)
+library(zoo)
 tidymodels_prefer()
 ```
 
 ```{r}
+
 # load data
 seoul_bike <- read.csv("/Users/katlynshaw/Desktop/pstat 131/final-proj-131-shawk/SeoulBikeDataColNameFIXED.csv") %>% 
   clean_names() %>% 
+  filter(functioning_day == "Yes") %>% 
   mutate(date = as.Date(date, "%d/%m/%Y"),
          time_of_day = factor(ifelse(hour < 6, "Night", ifelse(hour < 12, "Morning", ifelse(hour < 18, "Afternoon", ifelse(hour < 24, "Evening", "Null")))), levels = c("Night", "Morning", "Afternoon", "Evening")),
          hour = factor(hour, levels = c(0:23)),
          seasons = factor(seasons, levels = c("Winter", "Spring", "Summer", "Autumn")),
          holiday = factor(holiday, levels = c("Holiday", "No Holiday")),
          functioning_day = factor(functioning_day, levels = c("Yes", "No")),
-         weekday = factor(lubridate::wday(date), levels = c(1:7)),
-         workday = factor(ifelse(weekday != 1 & weekday != 7, "Yes", "No"), levels = c("Yes", "No")),
-         goodweather = factor(ifelse(rainfall == 0.0 & snowfall == 0.0, "Yes", "No"), levels = c("Yes", "No"))
-         #percent_of_mean = rented_bike_count / mean(seoul_bike$rented_bike_count)
+         weekday = lubridate::wday(date, label = TRUE),
+         workday = factor(ifelse(weekday != "Sun" & weekday != "Sat", "Yes", "No"), levels = c("Yes", "No")),
+         did_it_rain = factor(ifelse(rainfall == 0.0, "No", "Yes"), levels = c("Yes","No")),
+         did_it_snow = factor(ifelse(snowfall == 0.0, "No", "Yes"), levels = c("Yes", "No")),
+         month = factor(lubridate::month(date, label = TRUE), levels = c("Dec", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov")),
+         week = lubridate::epiweek(date),
+         week = ifelse(month != "Dec" | (month == "Dec" & week == 1), week+52, week),
+         week = week - 48,
+         year = lubridate::year(date)
          )
-```
 
-```{r}
 # split data
 
 set.seed(151020)
@@ -56,52 +64,197 @@ bike_test <- testing(seoul_bike_split)
 ```
 
 
-Columns list: Date mm/dd/yyyy, Rented Bike Count, Hour, Temperature (Celsius), Humidity (%), Wind Speed (m/s), Visibility (10m), Dew point temperature (Celsius), Solar Radiation (MJ/m2), Rainfall (mm), Snowfall (cm), Seasons, Holiday, Functioning Day, weekday (1=sunday, 2=monday, etc), workday assumes a 5 day workweek from mon-fri returns Yes for weekday and No for weekend
+## Introduction
 
-Data goes from 12/1/2017 to 11/30/2018 which is 1 full year.
+The purpose of this project is to generate a model that will predict under which circumstance individuals are most likely to rent bikes through a bike-share program in Seoul, South Korea. This kind of model could be useful for bike-share companies to better manage their bicycle supply to most adequately support their consumer base.
 
-exploratory questions:
+What is a bike-share program? To those unaware, a bike-share program is a service in which bicycles are available for shared use to individuals for a fee. Bike share companies across the globe have been popping up at an exhausting rate. Locally, several different companies have *attempted* to sell their product on UCSB campus, namely HOPR and LimeBike, over the past few years. I can imagine that in a place like Seoul, where the population heavily relies on public transit, bike-share companies can be more profitable.
 
-What's the most popular day to rent bikes? Month? Season? Hour?
+The data I use is from UCI's Machine Learning Repository (https://archive.ics.uci.edu/ml/datasets/Seoul+Bike+Sharing+Demand) which joins the count of public bikes rented at each hour in Seoul Bike Sharing System with the corresponding weather data and Holidays information from the following sources: https://data.seoul.go.kr/ and https://publicholidays.go.kr. The data spans from December 1st 2017 to November 30th 2018 (total of 8760 observations) and includes holiday and weather attributes. Specifically, their data set came with the following attributes:
+
+- Date mm/dd/yyyy
+- Rented Bike Count
+- Hour (of the day from 0 to 23)
+- Temperature (Celsius)
+- Humidity (%)
+- Wind Speed (m/s)
+- Visibility (10m)
+- Dew point temperature (Celsius)
+- Solar Radiation (MJ/m2)
+- Rainfall (mm)
+- Snowfall (cm)
+- Seasons (Winter, Summer, Spring, or Autumn)
+- Holiday (Yes or No) 
+- Functioning Day (Yes or No) 
+
+
+I added a few additional attributes of interest:
+
+- Time of day (Night, Morning, Afternoon, or Evening based on value of Hour)
+- Weekday (factor value 1:7 corresponding to day of the week where 1 is Sunday, 2 is Monday, etc)
+- Workday (Yes or No where Mon-Fri are workdays)
+- Month (Jan through Dec)
+- did_it_rain (Yes if rainfall > 0.0, else No)
+- did_it_snow (Yes if snowfall > 0.0, else No)
+
+Minimal data cleaning was executed on this data set. I removed special characters from attribute names ($^\circ$, etc.) so the data could be read by R. Then, I filtered out the Non-functioning days since no information is collected about bike rentals. And I additionally reformatted the attribute names to snake_case, converted Date to date format, and changed attributes from character/numeric to factor type where necessary.
+
+
+### Data Split
+
+Before doing any analysis of the data, I conducted an 80:20 training:testing split resulting in a training set with 7008 observations and a testing set with 1752 observations, both adequate for model building. The split is not stratified on any variable since the variables we are most concerned with are continuous.
+
+
+## Data Exploration
+
+How do these attributes interact with each other? How do weather, type of day, time of day, and season affect how many bikes are rented?
+
+To see how different weather indicators interact with the amount of bikes rented, we can look at the correlations between numeric variables:
+
+```{r}
+bike_train %>% 
+  select(where(is.numeric)) %>% 
+  cor(use="pairwise.complete.obs") %>% 
+  corrplot(type = 'lower', diag = FALSE, method = 'color', tl.col = 'black')
+```
+
+As we can see, the rented bike count has a positive correlation with temperature, wind speed, visibility, dew-point-temperature, and solar radiation. And is negatively correlated with humidity, rainfall, and snowfall. This implies that more people want to rent bikes when temperature and visibility are high and humidity, rainfall, and snowfall are low --- people are more likely to rent bikes when the weather is good.
+
+Let's look at some of these relationships in greater detail:
+
+```{r}
+bike_train %>% 
+  ggplot(aes(temperature, rented_bike_count)) + geom_point(alpha = 0.1) + geom_smooth()
+```
+
+Now we get a better picture of how temperature affects rented bike count. Following the trend line in blue, we see that rented bike count steadily increases as temperature goes from $-20^\circ$C to about $30^\circ$C before declining as it gets hotter.
+
+```{r}
+bike_train %>% 
+  ggplot(aes(humidity, rented_bike_count)) + geom_point(alpha = 0.1) + geom_smooth()
+```
+
+We see that rented bike count takes a significant dip when humidity increases above 80%.
+
+```{r}
+bike_train %>%
+  ggplot(aes(rainfall, rented_bike_count)) + geom_point(alpha = 0.3) + geom_smooth(method = "lm")
+```
+
+Rainfall appears to affect the amount of bikes rented very significantly, but maybe this is simply because there are more days with no rain (rainfall = 0.0), thus more bikes are rented?
+
+```{r}
+bike_train %>% 
+  ggplot(aes(did_it_rain, rented_bike_count)) + geom_boxplot()
+```
+
+Clearly this is the case, so if we filter to only include positive values of rainfall, we see that there is really only a slight decrease as rainfall increases.
 
 
 ```{r}
+bike_train %>% filter(rainfall != 0.0) %>% 
+  ggplot(aes(rainfall, rented_bike_count)) + geom_point(alpha = 0.3) + geom_smooth(method = "lm")
+```
 
+We can apply the same logic to snowfall and see that while overall more bikes are rented on days where it is not snowing, there is minimal decrease in amount of rented bikes as snowfall increases.
+
+```{r}
+bike_train %>% 
+  ggplot(aes(did_it_snow, rented_bike_count)) + geom_boxplot()
+
+bike_train %>% filter(snowfall != 0.0) %>%
+  ggplot(aes(snowfall, rented_bike_count)) + geom_point(alpha = 0.5) + geom_smooth(method = "lm")
+```
+
+
+Now lets look at how rented bike count is affected time-based attributes: date, month, season, weekday, hour, time of day, workday and holidays.
+
+Compare how rented bike count is affected over the course of the year:
+
+```{r}
 bike_train %>% 
   ggplot(aes(date, rented_bike_count)) + geom_point() + geom_smooth()
+```
 
+From this first plot, we see that there's a dip in winter and spike in the early summer.
+
+Another way to visualize how many bicycles are rented throughout the year is through this heat map:
+
+```{r}
 bike_train %>% 
-  ggplot(aes(seasons, rented_bike_count)) + geom_col()
+  ggplot(aes(week, weekday, fill = rented_bike_count)) + 
+  geom_tile(color = "white") +
+  scale_fill_gradient(low="red", high="green")
 
+```
+
+Where each box corresponding to a day is colored by the average number bikes rented per hour (empty boxes are from non-functional days). 
+
+Another heat map comparing the day of week to month:
+
+```{r}
 bike_train %>% 
-  ggplot(aes(weekday, rented_bike_count)) + geom_col()
+  ggplot(aes(month, weekday, fill = rented_bike_count)) + 
+  geom_tile(color = "white") +
+  scale_fill_gradient(low="red", high="green")
+```
 
+We see that there are hotspots on Fridays in May, Thursdays in June and others.
+
+And these next few plots confirm that the summer months are by far the most popular time to rent bikes and the winter months are the least.
+
+```{r}
+
+month_bp <- bike_train %>% 
+  ggplot(aes(rented_bike_count, month)) + geom_boxplot() + scale_y_discrete(limits=rev)
+month_col <- bike_train %>% 
+  ggplot(aes(rented_bike_count, month)) + geom_col() + scale_y_discrete(limits=rev)
+seasons_bp <- bike_train %>% 
+  ggplot(aes(rented_bike_count, seasons)) + geom_boxplot() + scale_y_discrete(limits=rev)
+seasons_col <- bike_train %>% 
+  ggplot(aes(rented_bike_count, seasons)) + geom_col() + scale_y_discrete(limits=rev)
+
+grid.arrange(month_bp, month_col, seasons_bp, seasons_col, ncol = 2)
+```
+
+Finally, lets look at how working and holidays affect rented bike counts:
+
+```{r}
+workday_bp <- bike_train %>% 
+  ggplot(aes(workday, rented_bike_count)) + geom_boxplot()
+
+holiday_bp <- bike_train %>% 
+  ggplot(aes(holiday, rented_bike_count)) + geom_boxplot()
+
+grid.arrange(workday_bp, holiday_bp, ncol = 2)
+
+```
+
+Slightly more bikes are rented on workdays compared to weekends. Similarly, more bikes are rented on non-holidays compared to holidays. A reasonable explanation for this is that fewer people are biking on days that they typically have off from work.
+
+
+Then, during a single day we can compare the frequency at which bikes are rented by hour and by time of day.
+
+```{r}
 bike_train %>% 
   ggplot(aes(hour, rented_bike_count)) + geom_col()
 
 bike_train %>% 
   ggplot(aes(time_of_day, rented_bike_count)) + geom_col()
-
-bike_train %>% 
-  ggplot(aes(rented_bike_count, humidity)) + geom_point() + geom_smooth(method = "lm")
-
-bike_train %>% filter(rainfall != 0.0) %>% 
-  ggplot(aes(rainfall, rented_bike_count)) + geom_point() + geom_smooth(method = "lm")
-
-bike_train %>% filter(snowfall != 0.0) %>%
-  ggplot(aes(snowfall, rented_bike_count)) + geom_point() + geom_smooth(method = "lm")
-
-bike_train %>% 
-  ggplot(aes(temperature, rented_bike_count)) + geom_point() + geom_smooth()
-
-bike_train %>% 
-  select(where(is.numeric)) %>% 
-  cor(use="pairwise.complete.obs") %>% 
-  corrplot(type = 'lower', diag = FALSE, method = 'color')
-
 ```
 
+6pm is the most popular hour to rent bikes, while 4am is the least. More bikes are rented in the evening (between 6pm and midnight) than any other time of day. And fewer rented during nighttime (midnight to 6am).
+
+
+## Model Building
+
+For this regression problem, we will fit 4 different models (Linear Regression, Regularized Regression, Boosting and Random Forest Models), calculate pertinent metrics from each, and determine which one is best at predicting rented bike counts.
+
+First, we fold our training data and build our recipe. I chose 5-fold cross validation with 3 repeats. Next, the recipe. Since several of the attributes in the data set are directly correlated (i.e. workday and weekday, season and month) I chose the variables that give more information (i.e. weekday, month) to be predictors in the recipe. Then, deal with factor variables with step_dummy and step_novel. Finally, center and scale all predictors.
+
 ```{r}
+bike_folds <- bike_train %>% vfold_cv(v = 5, repeats = 3)
+
 # letsa get cookin
 bikes_recipe <- recipe(rented_bike_count ~
                          hour +
@@ -113,14 +266,20 @@ bikes_recipe <- recipe(rented_bike_count ~
                          solar_radiation +
                          rainfall +
                          snowfall +
-                         seasons +
                          holiday +
-                         functioning_day,
+                         month +
+                         weekday,
                        data = bike_train) %>% 
-  step_dummy(hour, seasons, holiday, functioning_day) %>% 
+  step_novel(hour, holiday, month, weekday) %>% 
+  step_dummy(hour, holiday, month, weekday) %>% 
   step_normalize(all_predictors())
 
 ```
+
+### Linear Regression Model
+
+
+
 
 ```{r}
 
@@ -184,7 +343,96 @@ ridge_fit %>%
   plot(xvar = "lambda")
   
 
+predict(ridge_fit, new_data = bike_train, penalty = 0)
+
+bike_train_res <- predict(ridge_fit, new_data = bike_train %>% select(-rented_bike_count)) %>% 
+  bind_cols(bike_train %>% select(rented_bike_count))
+
+bike_metrics(bike_train_res, truth = rented_bike_count, estimate = .pred)
+
+
+# whats the best penalty value for tuning?
+
+
+
+
 ```
 
+```{r}
+ridge_recipe <- bikes_recipe %>% 
+  step_novel(all_nominal_predictors()) %>% 
+  step_zv(all_predictors())
+
+ridge_spec <- linear_reg(mixture = 0, penalty = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet")
+
+ridge_workflow <- workflow() %>% 
+  add_recipe(ridge_recipe) %>% 
+  add_model(ridge_spec)
+
+penalty_grid <- grid_regular(penalty(range = c(-5, 5)), levels = 50)
+
+bike_fold <- vfold_cv(bike_train, v = 10)
+
+tune_res <- tune_grid(
+  ridge_workflow,
+  resamples = bike_fold, 
+  grid = penalty_grid
+)
+
+autoplot(tune_res)
+collect_metrics(tune_res)
+
+best_penalty <- select_best(tune_res, metric = "rsq")
+best_penalty
+
+ridge_final <- finalize_workflow(ridge_workflow, best_penalty)
+
+ridge_final_fit <- fit(ridge_final, data = bike_train)
+
+augment(ridge_final_fit, new_data = bike_test) %>%
+  rsq(truth = rented_bike_count, estimate = .pred)
 
 
+```
+
+```{r}
+# lasso
+
+lasso_recipe <- bikes_recipe %>% 
+  step_novel(all_nominal_predictors()) %>%
+  step_zv(all_predictors())
+
+
+lasso_spec <- 
+  linear_reg(penalty = tune(), mixture = 1) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet") 
+
+lasso_workflow <- workflow() %>% 
+  add_recipe(lasso_recipe) %>% 
+  add_model(lasso_spec)
+ 
+
+tune_res <- tune_grid(
+  lasso_workflow,
+  resamples = bike_fold, 
+  grid = penalty_grid
+)
+
+best_penalty <- select_best(tune_res, metric = "rsq")
+
+lasso_final <- finalize_workflow(lasso_workflow, best_penalty)
+
+lasso_final_fit <- fit(lasso_final, data = bike_train)
+
+augment(lasso_final_fit, new_data = bike_test) %>%
+  rsq(truth = rented_bike_count, estimate = .pred)
+
+```
+
+## Code appendix
+
+```{r appendix, ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+```
