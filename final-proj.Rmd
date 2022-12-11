@@ -253,10 +253,10 @@ For this regression problem, we will fit 4 different models (Linear Regression, 
 First, we fold our training data and build our recipe. I chose 5-fold cross validation with 3 repeats. Next, the recipe. Since several of the attributes in the data set are directly correlated (i.e. workday and weekday, season and month) I chose the variables that give more information (i.e. weekday, month) to be predictors in the recipe. Then, deal with factor variables with step_dummy and step_novel. Finally, center and scale all predictors.
 
 ```{r}
-bike_folds <- bike_train %>% vfold_cv(v = 5, repeats = 3)
+bike_folds <- bike_train %>% vfold_cv(v = 10)
 
 # letsa get cookin
-bikes_recipe <- recipe(rented_bike_count ~
+bike_recipe <- recipe(rented_bike_count ~
                          hour +
                          temperature +
                          humidity +
@@ -276,10 +276,10 @@ bikes_recipe <- recipe(rented_bike_count ~
 
 ```
 
+
 ### Linear Regression Model
 
-
-
+The first model I chose to fit to
 
 ```{r}
 
@@ -290,21 +290,17 @@ lm_model <- linear_reg() %>%
 
 lm_workflow <- workflow() %>% 
   add_model(lm_model) %>% 
-  add_recipe(bikes_recipe)
+  add_recipe(bike_recipe)
 
 lm_fit <- fit(lm_workflow, bike_train)
 
-lm_fit %>%
-  extract_fit_parsnip() %>% 
-  tidy()
-
-bike_train_res <- predict(lm_fit, new_data = bike_train %>% select(-rented_bike_count)) %>% 
+lm_bike_train_res <- predict(lm_fit, new_data = bike_train %>% select(-rented_bike_count)) %>% 
   bind_cols(bike_train %>% select(rented_bike_count))
 
-bike_train_res %>% 
+lm_bike_train_res %>% 
   head()
 
-bike_train_res %>% 
+lm_bike_train_res %>% 
   ggplot(aes(x = .pred, y = rented_bike_count)) +
   geom_point(alpha = 0.2) +
   geom_abline(lty = 2) + 
@@ -312,9 +308,41 @@ bike_train_res %>%
   coord_obs_pred()
 
 bike_metrics <- metric_set(rmse, rsq, mae)
-bike_metrics(bike_train_res, truth = rented_bike_count, estimate = .pred)
+bike_metrics(lm_bike_train_res, truth = rented_bike_count, estimate = .pred)
 
 ```
+
+
+
+
+
+### Polynomial Regression Model
+
+```{r}
+
+poly_tune_bike_recipe <- bike_recipe %>% 
+  step_poly(all_numeric_predictors(), degree = tune())
+
+poly_tune_bike_wf <- workflow() %>% 
+  add_recipe(poly_tune_bike_recipe) %>% 
+  add_model(lm_model)
+
+degree_grid <- grid_regular(degree(range = c(1, 10)), levels = 10)
+
+poly_tune_bike_res <- tune_grid(
+  object = poly_tune_bike_wf, 
+  resamples = bike_folds, 
+  grid = degree_grid
+)
+
+```
+
+
+```{r}
+autoplot(poly_tune_bike_res)
+
+```
+
 
 ```{r}
 # ridge regression
@@ -430,6 +458,79 @@ lasso_final_fit <- fit(lasso_final, data = bike_train)
 augment(lasso_final_fit, new_data = bike_test) %>%
   rsq(truth = rented_bike_count, estimate = .pred)
 
+```
+
+### Regularized Regression -- Elastic Net Model
+
+```{r}
+
+elastic_net_spec <- 
+  linear_reg(penalty = tune(), mixture = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet")
+
+elastic_net_wf <- workflow() %>% 
+  add_recipe(bike_recipe) %>% 
+  add_model(elastic_net_spec)
+
+elastic_net_grid <- grid_regular(mixture(range = c(0, 1)), penalty(range = c(-5, 5)), levels = 10)
+```
+
+
+
+```{r, eval = F}
+elastic_net_tune_res <- tune_grid(
+  elastic_net_wf,
+  resamples = bike_folds, 
+  grid = elastic_net_grid
+)
+
+write_rds(elastic_net_tune_res, file = "elastic-net-res.rds")
+```
+
+```{r}
+elastic_net_tune_res_read <- read_rds(file = "elastic-net-res.rds")
+
+autoplot(elastic_net_tune_res_read)
+```
+
+### Random Forest Model
+
+```{r}
+
+tree_bike_spec <- decision_tree() %>% 
+  set_engine("rpart")
+
+reg_tree_bike_spec <- tree_bike_spec %>% 
+  set_mode("regression")
+
+reg_tree_bike_fit <- reg_tree_bike_spec %>% 
+  fit(rented_bike_count ~ hour + temperature +  humidity +  wind_speed + visibility + dew_point_temperature + solar_radiation + rainfall + snowfall + holiday + month + weekday,
+                       data = bike_train)
+
+reg_tree_bike_wf <- workflow() %>% 
+  add_model(reg_tree_bike_spec %>% set_args(cost_complexity = tune())) %>% 
+  add_recipe(bike_recipe)
+
+
+param_grid <- grid_regular(cost_complexity(range = c(-5, 5)), levels = 10)
+
+```
+
+```{r, eval = F}
+reg_tree_bike_tune_res <- tune_grid(
+  reg_tree_bike_wf, 
+  resamples = bike_folds, 
+  grid = param_grid
+)
+
+write_rds(reg_tree_bike_tune_res, file = "reg-tree-res.rds")
+```
+
+
+```{r}
+reg_tree_bike_tune_res_read <- read_rds(file = "reg-tree-res.rds")
+autoplot(reg_tree_bike_tune_res_read)
 ```
 
 ## Code appendix
