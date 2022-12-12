@@ -2,11 +2,16 @@
 title: "PSTAT 131 Final Project"
 author: "Katlyn Shaw"
 date: "2022-11-28"
-output: html_document
+output: 
+  html_document:
+      toc: true
+      toc_float: true
+      code_folding: hide
+
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, message = FALSE,
+knitr::opts_chunk$set(message = FALSE,
                       warning = FALSE)
 # load packages
 library(glmnet)
@@ -35,6 +40,7 @@ seoul_bike <- read.csv("/Users/katlynshaw/Desktop/pstat 131/final-proj-131-shawk
   clean_names() %>% 
   filter(functioning_day == "Yes") %>% 
   mutate(date = as.Date(date, "%d/%m/%Y"),
+         humidity = humidity / 100,
          time_of_day = factor(ifelse(hour < 6, "Night", ifelse(hour < 12, "Morning", ifelse(hour < 18, "Afternoon", ifelse(hour < 24, "Evening", "Null")))), levels = c("Night", "Morning", "Afternoon", "Evening")),
          hour = factor(hour, levels = c(0:23)),
          seasons = factor(seasons, levels = c("Winter", "Spring", "Summer", "Autumn")),
@@ -60,6 +66,14 @@ seoul_bike_split <- seoul_bike %>%
 
 bike_train <- training(seoul_bike_split)
 bike_test <- testing(seoul_bike_split)
+bike_folds <- bike_train %>% vfold_cv(v = 5, repeats = 3)
+
+```
+
+```{r, eval = F}
+write_csv(seoul_bike, file = "cleaned_data.csv")
+write_csv(bike_train, file = "training_data.csv")
+write_csv(bike_test, file = "testing_data.csv")
 
 ```
 
@@ -88,21 +102,22 @@ The data I use is from UCI's Machine Learning Repository (https://archive.ics.uc
 - Functioning Day (Yes or No) 
 
 
-I added a few additional attributes of interest:
+I added a few additional attributes of interest for data exploration:
 
 - Time of day (Night, Morning, Afternoon, or Evening based on value of Hour)
 - Weekday (factor value 1:7 corresponding to day of the week where 1 is Sunday, 2 is Monday, etc)
 - Workday (Yes or No where Mon-Fri are workdays)
 - Month (Jan through Dec)
+- Week (0 to 52, where week 0 is the first week of the dataset and 52, the last)
 - did_it_rain (Yes if rainfall > 0.0, else No)
 - did_it_snow (Yes if snowfall > 0.0, else No)
 
-Minimal data cleaning was executed on this data set. I removed special characters from attribute names ($^\circ$, etc.) so the data could be read by R. Then, I filtered out the Non-functioning days since no information is collected about bike rentals. And I additionally reformatted the attribute names to snake_case, converted Date to date format, and changed attributes from character/numeric to factor type where necessary.
+Minimal data cleaning was executed on this data set. I removed special characters from attribute names ($^\circ$, etc.) so the data could be read by R. Then, I filtered out the Non-functioning days since no information is collected about bike rentals. And I additionally reformatted the attribute names to snake_case, converted Date to date format, adjusted humidity to be values in (0,1), and changed attributes from character/numeric to factor type where necessary.
 
 
 ### Data Split
 
-Before doing any analysis of the data, I conducted an 80:20 training:testing split resulting in a training set with 7008 observations and a testing set with 1752 observations, both adequate for model building. The split is not stratified on any variable since the variables we are most concerned with are continuous.
+Before doing any analysis of the data, I conducted an 80:20 training:testing split resulting in a training set with 7008 observations and a testing set with 1752 observations, both adequate for model building. The split is not stratified on any variable since the variables we are most concerned with are continuous. I also created folds from the training set with 5 partitions and 3 repeats.
 
 
 ## Data Exploration
@@ -113,7 +128,7 @@ To see how different weather indicators interact with the amount of bikes rented
 
 ```{r}
 bike_train %>% 
-  select(where(is.numeric)) %>% 
+  select(where(is.numeric), -week, -year) %>% 
   cor(use="pairwise.complete.obs") %>% 
   corrplot(type = 'lower', diag = FALSE, method = 'color', tl.col = 'black')
 ```
@@ -240,7 +255,7 @@ bike_train %>%
   ggplot(aes(hour, rented_bike_count)) + geom_col()
 
 bike_train %>% 
-  ggplot(aes(time_of_day, rented_bike_count)) + geom_col()
+  ggplot(aes(time_of_day, rented_bike_count)) + geom_boxplot()
 ```
 
 6pm is the most popular hour to rent bikes, while 4am is the least. More bikes are rented in the evening (between 6pm and midnight) than any other time of day. And fewer rented during nighttime (midnight to 6am).
@@ -250,11 +265,9 @@ bike_train %>%
 
 For this regression problem, we will fit 4 different models (Linear Regression, Regularized Regression, Boosting and Random Forest Models), calculate pertinent metrics from each, and determine which one is best at predicting rented bike counts.
 
-First, we fold our training data and build our recipe. I chose 5-fold cross validation with 3 repeats. Next, the recipe. Since several of the attributes in the data set are directly correlated (i.e. workday and weekday, season and month) I chose the variables that give more information (i.e. weekday, month) to be predictors in the recipe. Then, deal with factor variables with step_dummy and step_novel. Finally, center and scale all predictors.
+Fist we build, our recipe. Since several of the attributes in the data set are directly correlated (i.e. workday and weekday, season and month) I chose the variables that give more information (i.e. weekday, month) to be predictors in the recipe. Then, deal with factor variables with step_dummy and step_novel. Finally, center and scale all numeric predictors.
 
 ```{r}
-bike_folds <- bike_train %>% vfold_cv(v = 10)
-
 # letsa get cookin
 bike_recipe <- recipe(rented_bike_count ~
                          hour +
@@ -272,14 +285,14 @@ bike_recipe <- recipe(rented_bike_count ~
                        data = bike_train) %>% 
   step_novel(hour, holiday, month, weekday) %>% 
   step_dummy(hour, holiday, month, weekday) %>% 
-  step_normalize(all_predictors())
+  step_normalize(all_numeric_predictors())
 
 ```
 
 
 ### Linear Regression Model
 
-The first model I chose to fit to
+I first chose to fit a Linear regression model to the data
 
 ```{r}
 
@@ -297,166 +310,10 @@ lm_fit <- fit(lm_workflow, bike_train)
 lm_bike_train_res <- predict(lm_fit, new_data = bike_train %>% select(-rented_bike_count)) %>% 
   bind_cols(bike_train %>% select(rented_bike_count))
 
-lm_bike_train_res %>% 
-  head()
 
-lm_bike_train_res %>% 
-  ggplot(aes(x = .pred, y = rented_bike_count)) +
-  geom_point(alpha = 0.2) +
-  geom_abline(lty = 2) + 
-  theme_bw() +
-  coord_obs_pred()
 
 bike_metrics <- metric_set(rmse, rsq, mae)
 bike_metrics(lm_bike_train_res, truth = rented_bike_count, estimate = .pred)
-
-```
-
-
-
-
-
-### Polynomial Regression Model
-
-```{r}
-
-poly_tune_bike_recipe <- bike_recipe %>% 
-  step_poly(all_numeric_predictors(), degree = tune())
-
-poly_tune_bike_wf <- workflow() %>% 
-  add_recipe(poly_tune_bike_recipe) %>% 
-  add_model(lm_model)
-
-degree_grid <- grid_regular(degree(range = c(1, 10)), levels = 10)
-
-poly_tune_bike_res <- tune_grid(
-  object = poly_tune_bike_wf, 
-  resamples = bike_folds, 
-  grid = degree_grid
-)
-
-```
-
-
-```{r}
-autoplot(poly_tune_bike_res)
-
-```
-
-
-```{r}
-# ridge regression
-
-ridge_spec <- linear_reg(mixture = 0, penalty = 0) %>% 
-  set_mode("regression") %>% 
-  set_engine("glmnet")
-
-ridge_fit <- fit(ridge_spec, rented_bike_count ~
-                         hour +
-                         temperature +
-                         humidity +
-                         wind_speed +
-                         visibility +
-                         dew_point_temperature +
-                         solar_radiation +
-                         rainfall +
-                         snowfall +
-                         seasons +
-                         holiday +
-                         functioning_day,
-                       data = bike_train)
-
-ridge_fit %>% 
-  extract_fit_engine() %>% 
-  plot(xvar = "lambda")
-  
-
-predict(ridge_fit, new_data = bike_train, penalty = 0)
-
-bike_train_res <- predict(ridge_fit, new_data = bike_train %>% select(-rented_bike_count)) %>% 
-  bind_cols(bike_train %>% select(rented_bike_count))
-
-bike_metrics(bike_train_res, truth = rented_bike_count, estimate = .pred)
-
-
-# whats the best penalty value for tuning?
-
-
-
-
-```
-
-```{r}
-ridge_recipe <- bikes_recipe %>% 
-  step_novel(all_nominal_predictors()) %>% 
-  step_zv(all_predictors())
-
-ridge_spec <- linear_reg(mixture = 0, penalty = tune()) %>% 
-  set_mode("regression") %>% 
-  set_engine("glmnet")
-
-ridge_workflow <- workflow() %>% 
-  add_recipe(ridge_recipe) %>% 
-  add_model(ridge_spec)
-
-penalty_grid <- grid_regular(penalty(range = c(-5, 5)), levels = 50)
-
-bike_fold <- vfold_cv(bike_train, v = 10)
-
-tune_res <- tune_grid(
-  ridge_workflow,
-  resamples = bike_fold, 
-  grid = penalty_grid
-)
-
-autoplot(tune_res)
-collect_metrics(tune_res)
-
-best_penalty <- select_best(tune_res, metric = "rsq")
-best_penalty
-
-ridge_final <- finalize_workflow(ridge_workflow, best_penalty)
-
-ridge_final_fit <- fit(ridge_final, data = bike_train)
-
-augment(ridge_final_fit, new_data = bike_test) %>%
-  rsq(truth = rented_bike_count, estimate = .pred)
-
-
-```
-
-```{r}
-# lasso
-
-lasso_recipe <- bikes_recipe %>% 
-  step_novel(all_nominal_predictors()) %>%
-  step_zv(all_predictors())
-
-
-lasso_spec <- 
-  linear_reg(penalty = tune(), mixture = 1) %>% 
-  set_mode("regression") %>% 
-  set_engine("glmnet") 
-
-lasso_workflow <- workflow() %>% 
-  add_recipe(lasso_recipe) %>% 
-  add_model(lasso_spec)
- 
-
-tune_res <- tune_grid(
-  lasso_workflow,
-  resamples = bike_fold, 
-  grid = penalty_grid
-)
-
-best_penalty <- select_best(tune_res, metric = "rsq")
-
-lasso_final <- finalize_workflow(lasso_workflow, best_penalty)
-
-lasso_final_fit <- fit(lasso_final, data = bike_train)
-
-augment(lasso_final_fit, new_data = bike_test) %>%
-  rsq(truth = rented_bike_count, estimate = .pred)
 
 ```
 
@@ -491,8 +348,8 @@ write_rds(elastic_net_tune_res, file = "elastic-net-res.rds")
 ```{r}
 elastic_net_tune_res_read <- read_rds(file = "elastic-net-res.rds")
 
-autoplot(elastic_net_tune_res_read)
 ```
+
 
 ### Random Forest Model
 
@@ -512,12 +369,12 @@ reg_tree_bike_wf <- workflow() %>%
   add_model(reg_tree_bike_spec %>% set_args(cost_complexity = tune())) %>% 
   add_recipe(bike_recipe)
 
-
-param_grid <- grid_regular(cost_complexity(range = c(-5, 5)), levels = 10)
-
 ```
 
 ```{r, eval = F}
+bike_folds <- bike_train %>% vfold_cv(v = 5, repeats = 3)
+param_grid <- grid_regular(cost_complexity(range = c(-5, 5)), levels = 50)
+
 reg_tree_bike_tune_res <- tune_grid(
   reg_tree_bike_wf, 
   resamples = bike_folds, 
@@ -530,8 +387,114 @@ write_rds(reg_tree_bike_tune_res, file = "reg-tree-res.rds")
 
 ```{r}
 reg_tree_bike_tune_res_read <- read_rds(file = "reg-tree-res.rds")
-autoplot(reg_tree_bike_tune_res_read)
 ```
+
+### Boosted Tree Model
+
+```{r}
+boosted_tree_spec <- boost_tree(min_n = tune(),
+                       mtry = tune(),
+                       learn_rate = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("xgboost")
+
+boosted_tree_wf <- workflow() %>% 
+  add_model(boosted_tree_spec) %>% 
+  add_recipe(bike_recipe)
+
+param_grid <- grid_regular(min_n(range = c(1, 10)),
+                           mtry(range = c(2, 12)), 
+                           learn_rate(range = c(-5, 5)),
+                           levels = 50)
+
+
+```
+
+
+
+
+```{r, eval = F}
+boosted_tree_tune <- boosted_tree_wf %>% 
+  tune_grid(
+    resamples = bike_folds, 
+    grid = param_grid
+    )
+
+write_rds(boosted_tree_tune, file = "boosted_tree_tune.rds")
+```
+
+This took a crazy amount of time to run so I wrote out the results
+
+```{r}
+boosted_tree_tune_read <- read_rds(file = "boosted_tree_tune.rds")
+```
+
+
+## Implementing the Best Model on the Testing set
+
+To find which model performed best on the training data, we compare rmse values. First let's choose each model for the best tuning parameters.
+
+```{r}
+
+# rmse for linear model
+
+bike_metrics <- metric_set(rmse)
+bike_metrics(lm_bike_train_res, truth = rented_bike_count, estimate = .pred)
+
+# finalize workflow for best en model
+
+best_penalty_en <- select_best(elastic_net_tune_res_read, metric = "rmse")
+
+elastic_net_final <- finalize_workflow(elastic_net_wf, best_penalty_en)
+
+elastic_net_final_fit <- fit(elastic_net_final, data = bike_train)
+
+augment(elastic_net_final_fit, new_data = bike_train) %>%
+  rmse(truth = rented_bike_count, estimate = .pred)
+
+# finalize workflow for best random forest model
+
+best_penalty_rt <- select_best(reg_tree_bike_tune_res_read, metric = "rmse")
+
+reg_tree_final <- finalize_workflow(reg_tree_bike_wf, best_penalty_rt)
+
+reg_tree_final_fit <- fit(reg_tree_final, data = bike_train)
+
+augment(reg_tree_final_fit, new_data = bike_train) %>%
+  rmse(truth = rented_bike_count, estimate = .pred)
+
+# finalize workflow for best boosted tree model
+
+best_penalty_bt <- select_best(boosted_tree_tune_read, metric = "rmse")
+
+boosted_tree_final <- finalize_workflow(boosted_tree_wf, best_penalty_bt)
+
+boosted_tree_final_fit <- fit(boosted_tree_final, data = bike_train)
+
+augment(boosted_tree_final_fit, new_data = bike_train) %>%
+  rmse(truth = rented_bike_count, estimate = .pred)
+
+```
+
+The random forest performs the best on the training data with an rmse of 188.3. Let's compare to how it performs on the testing data:
+
+```{r}
+augment(reg_tree_final_fit, new_data = bike_test) %>%
+  rmse(truth = rented_bike_count, estimate = .pred)
+```
+
+Yikes! Overfitting! The rmse has gone up significantly on the testing data.
+
+Regardless, since the boosted tree model has the lowest rmse metric, it is the best candidate for fitting the dataset out of our potential models. Is it the best possible model? Probably not.
+
+```{r}
+lm_bike_train_res 
+
+```
+
+
+
+
 
 ## Code appendix
 
