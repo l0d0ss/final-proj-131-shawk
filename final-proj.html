@@ -1614,8 +1614,7 @@ bike_test &lt;- testing(seoul_bike_split)
 bike_folds &lt;- bike_train %&gt;% vfold_cv(v = 5, repeats = 3)</code></pre>
 <pre class="r"><code>write_csv(seoul_bike, file = &quot;cleaned_data.csv&quot;)
 write_csv(bike_train, file = &quot;training_data.csv&quot;)
-write_csv(bike_test, file = &quot;testing_data.csv&quot;)
-read_csv()</code></pre>
+write_csv(bike_test, file = &quot;testing_data.csv&quot;)</code></pre>
 <div id="introduction" class="section level2">
 <h2>Introduction</h2>
 <p>The purpose of this project is to generate a model that will predict
@@ -1950,9 +1949,10 @@ write_rds(boosted_tree_tune, file = &quot;boosted_tree_tune.rds&quot;)</code></p
 <div id="implementing-the-best-model-on-the-testing-set" class="section level2">
 <h2>Implementing the Best Model on the Testing set</h2>
 <p>Now that we have finished setting up 4 models, we find which model
-performed best on the training data by comparing rmse values. Before
-that, we chose the final model for each type using select_best and
-minimizing rmse.</p>
+performed best on the training data. We chose the final model for each
+type using select_best and minimizing rmse. Which ever model has the
+lowest rmse becomes our winning model and will be fit to the testing
+data.</p>
 <p>rmse for the linear model:</p>
 <pre class="r"><code>bike_metrics &lt;- metric_set(rmse)
 bike_metrics(lm_bike_train_res, truth = rented_bike_count, estimate = .pred)</code></pre>
@@ -2088,8 +2088,6 @@ bike_folds &lt;- bike_train %&gt;% vfold_cv(v = 5, repeats = 3)
 write_csv(seoul_bike, file = &quot;cleaned_data.csv&quot;)
 write_csv(bike_train, file = &quot;training_data.csv&quot;)
 write_csv(bike_test, file = &quot;testing_data.csv&quot;)
-read_csv()
-
 bike_train %&gt;% 
   select(where(is.numeric), -week, -year) %&gt;% 
   cor(use=&quot;pairwise.complete.obs&quot;) %&gt;% 
