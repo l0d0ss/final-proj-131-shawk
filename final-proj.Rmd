@@ -74,7 +74,6 @@ bike_folds <- bike_train %>% vfold_cv(v = 5, repeats = 3)
 write_csv(seoul_bike, file = "cleaned_data.csv")
 write_csv(bike_train, file = "training_data.csv")
 write_csv(bike_test, file = "testing_data.csv")
-
 ```
 
 
@@ -310,14 +309,11 @@ lm_fit <- fit(lm_workflow, bike_train)
 lm_bike_train_res <- predict(lm_fit, new_data = bike_train %>% select(-rented_bike_count)) %>% 
   bind_cols(bike_train %>% select(rented_bike_count))
 
-
-
-bike_metrics <- metric_set(rmse, rsq, mae)
-bike_metrics(lm_bike_train_res, truth = rented_bike_count, estimate = .pred)
-
 ```
 
 ### Regularized Regression -- Elastic Net Model
+
+Next, I set up an elastic net model and workflow with tuning for penalty and mixture parameters. I set the mode to "regression" and the engine to "glmnet".
 
 ```{r}
 
@@ -329,11 +325,16 @@ elastic_net_spec <-
 elastic_net_wf <- workflow() %>% 
   add_recipe(bike_recipe) %>% 
   add_model(elastic_net_spec)
-
-elastic_net_grid <- grid_regular(mixture(range = c(0, 1)), penalty(range = c(-5, 5)), levels = 10)
 ```
 
 
+Then set up the tuning grid with mixture in a range between 0 and 1 and penalty in (-5,5), with 10 levels.
+
+```{r}
+elastic_net_grid <- grid_regular(mixture(range = c(0, 1)), penalty(range = c(-5, 5)), levels = 10)
+```
+
+Finally, I executed the model by tuning and fitting. I wrote the results so that they aren't rerun when knit.
 
 ```{r, eval = F}
 elastic_net_tune_res <- tune_grid(
@@ -353,6 +354,8 @@ elastic_net_tune_res_read <- read_rds(file = "elastic-net-res.rds")
 
 ### Random Forest Model
 
+Up next is our random forest model. Set the engine to "rpart" and mode to "regression". The parameter I tuned for is cost_complexity. Set up the tuning grid with cost_complexity in the range of -5 and 5.
+
 ```{r}
 
 tree_bike_spec <- decision_tree() %>% 
@@ -369,12 +372,12 @@ reg_tree_bike_wf <- workflow() %>%
   add_model(reg_tree_bike_spec %>% set_args(cost_complexity = tune())) %>% 
   add_recipe(bike_recipe)
 
+param_grid <- grid_regular(cost_complexity(range = c(-5, 5)), levels = 50)
 ```
 
-```{r, eval = F}
-bike_folds <- bike_train %>% vfold_cv(v = 5, repeats = 3)
-param_grid <- grid_regular(cost_complexity(range = c(-5, 5)), levels = 50)
+Then execute the model by tuning and fitting and writing the results.
 
+```{r, eval = F}
 reg_tree_bike_tune_res <- tune_grid(
   reg_tree_bike_wf, 
   resamples = bike_folds, 
@@ -384,12 +387,13 @@ reg_tree_bike_tune_res <- tune_grid(
 write_rds(reg_tree_bike_tune_res, file = "reg-tree-res.rds")
 ```
 
-
 ```{r}
 reg_tree_bike_tune_res_read <- read_rds(file = "reg-tree-res.rds")
 ```
 
 ### Boosted Tree Model
+
+Our last model is the boosted trees model. It's set to tune nin_n, mtry, and learn_rate with mode "regression" and engine "xgboost". The tuning grid is set up for min_n in a range from 1 to 10, mtry in 2 to 12, learn_rate in -5 to 5 and levels = 50.
 
 ```{r}
 boosted_tree_spec <- boost_tree(min_n = tune(),
@@ -410,7 +414,7 @@ param_grid <- grid_regular(min_n(range = c(1, 10)),
 
 ```
 
-
+Execute and write model:
 
 
 ```{r, eval = F}
@@ -423,7 +427,6 @@ boosted_tree_tune <- boosted_tree_wf %>%
 write_rds(boosted_tree_tune, file = "boosted_tree_tune.rds")
 ```
 
-This took a crazy amount of time to run so I wrote out the results
 
 ```{r}
 boosted_tree_tune_read <- read_rds(file = "boosted_tree_tune.rds")
@@ -432,14 +435,18 @@ boosted_tree_tune_read <- read_rds(file = "boosted_tree_tune.rds")
 
 ## Implementing the Best Model on the Testing set
 
-To find which model performed best on the training data, we compare rmse values. First let's choose each model for the best tuning parameters.
+Now that we have finished setting up 4 models, we find which model performed best on the training data. We chose the final model for each type using select_best and minimizing rmse. Which ever model has the lowest rmse becomes our winning model and will be fit to the testing data.
+
+rmse for the linear model:
 
 ```{r}
-
-# rmse for linear model
-
 bike_metrics <- metric_set(rmse)
 bike_metrics(lm_bike_train_res, truth = rented_bike_count, estimate = .pred)
+```
+
+rmse for the elastic net model:
+
+```{r}
 
 # finalize workflow for best en model
 
@@ -452,6 +459,12 @@ elastic_net_final_fit <- fit(elastic_net_final, data = bike_train)
 augment(elastic_net_final_fit, new_data = bike_train) %>%
   rmse(truth = rented_bike_count, estimate = .pred)
 
+```
+
+rmse for random forest model:
+
+```{r}
+
 # finalize workflow for best random forest model
 
 best_penalty_rt <- select_best(reg_tree_bike_tune_res_read, metric = "rmse")
@@ -462,6 +475,12 @@ reg_tree_final_fit <- fit(reg_tree_final, data = bike_train)
 
 augment(reg_tree_final_fit, new_data = bike_train) %>%
   rmse(truth = rented_bike_count, estimate = .pred)
+
+```
+
+rmse for boosted trees model
+
+```{r}
 
 # finalize workflow for best boosted tree model
 
@@ -485,15 +504,17 @@ augment(reg_tree_final_fit, new_data = bike_test) %>%
 
 Yikes! Overfitting! The rmse has gone up significantly on the testing data.
 
-Regardless, since the boosted tree model has the lowest rmse metric, it is the best candidate for fitting the dataset out of our potential models. Is it the best possible model? Probably not.
+Regardless, since the random forest model has the lowest rmse metric, it is the best candidate for fitting the dataset out of our potential models. Is it the best possible model? Probably not. 
+
+We can look at which predictors are most useful for the model:
 
 ```{r}
-lm_bike_train_res 
-
+reg_tree_final_fit %>% 
+  extract_fit_engine() %>% 
+  vip()
 ```
 
-
-
+Temperature (/dew point temperature) is the most useful predictor for predicting rented bike count. It's followed by dew point temperature which is highly correlated with temperature and the months February and January (also correlated with temperature since there can be extreme (cold) temperatures during this time). 
 
 
 ## Code appendix
